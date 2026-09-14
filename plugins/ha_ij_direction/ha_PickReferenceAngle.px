@@ -1,0 +1,65 @@
+{ Click a line without changing the document selection.
+  Call this PROCEDURE only after RunLayoutDialog has returned. }
+FUNCTION ha_AngleHasTan(angle: REAL): BOOLEAN;
+BEGIN
+	ha_AngleHasTan := Abs(Cos(Deg2Rad(angle))) > 0.000000000001;
+END;
+
+{ Success notification: close on the first timer event, without blocking Wait. }
+PROCEDURE ha_ShowReferenceAngle(angle: REAL);
+VAR
+	noticeID, noticeResult: LONGINT;
+
+	PROCEDURE NoticeHandler(VAR item: LONGINT; data: LONGINT);
+	BEGIN
+		CASE item OF
+			SetupDialogC:
+				RegisterDialogForTimerEvents(noticeID, 1000);
+			DialogTimerEventMessageC:
+			BEGIN
+				DeregisterDialogFromTimerEvents(noticeID);
+				item := 1;
+			END;
+		END;
+	END;
+
+BEGIN
+	noticeID := CreateLayout('基準線角度の取得', FALSE, '', '');
+	CreateStaticText(noticeID, 4,
+		Concat('基準線の角度を取得しました。 θ＝', Num2StrF(angle), '°'), 44);
+	SetFirstLayoutItem(noticeID, 4);
+	IF VerifyLayout(noticeID) THEN BEGIN
+		noticeResult := RunLayoutDialog(noticeID, NoticeHandler);
+		DeregisterDialogFromTimerEvents(noticeID);
+	END;
+END;
+
+PROCEDURE ha_PickReferenceAngle(VAR acquired: BOOLEAN; VAR angle: REAL);
+VAR
+	x, y, x1, y1, x2, y2: REAL;
+	h: HANDLE;
+	retry: BOOLEAN;
+BEGIN
+	acquired := FALSE;
+	REPEAT
+		retry := FALSE;
+		Message('基準にする直線をクリックしてください。');
+		GetPt(x, y);
+		ClrMessage;
+		h := PickObject(x, y);
+		IF h <> NIL THEN BEGIN
+			IF GetTypeN(h) = 2 THEN BEGIN
+				GetSegPt1(h, x1, y1);
+				GetSegPt2(h, x2, y2);
+				IF (x1 <> x2) OR (y1 <> y2) THEN BEGIN
+					angle := HAngle(h);
+					WHILE angle > 90 DO angle := angle - 180;
+					WHILE angle <= -90 DO angle := angle + 180;
+					acquired := TRUE;
+				END;
+			END;
+		END;
+		IF NOT acquired THEN
+			retry := YNDialog('有効な直線を取得できませんでした。再指定しますか？');
+	UNTIL acquired OR (NOT retry);
+END;

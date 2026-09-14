@@ -1,0 +1,14 @@
+* text=auto
+*.md text eol=lf
+*.txt text eol=lf
+*.vss text eol=lf
+*.px text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+LICENSE text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+*.vsm -text
+*.vlb -text
+*.vwr -text
+*.png -text

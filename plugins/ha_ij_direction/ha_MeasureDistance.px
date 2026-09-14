@@ -1,0 +1,84 @@
+{ Call outside RunLayoutDialog. Measurement never moves objects or writes history. }
+PROCEDURE ha_MeasureDistance(VAR acquired: BOOLEAN; VAR measuredDistance: REAL);
+CONST
+	kLength = 4;
+	kX = 5;
+	kY = 6;
+	kLengthValue = 7;
+	kXValue = 8;
+	kYValue = 9;
+	kValueWidth = 14;
+	kRowGap = 3;
+VAR
+	measureID, measureResult, selectedItem: LONGINT;
+	x1, y1, x2, y2, lengthValue, xValue, yValue, selectedValue: REAL;
+	timerRunning: BOOLEAN;
+
+	PROCEDURE MeasureHandler(VAR item: LONGINT; data: LONGINT);
+	BEGIN
+		CASE item OF
+			SetupDialogC:
+			BEGIN
+				SetBooleanItem(measureID, kLength, FALSE);
+				SetBooleanItem(measureID, kX, FALSE);
+				SetBooleanItem(measureID, kY, FALSE);
+			END;
+			kLength, kX, kY:
+			BEGIN
+				selectedItem := item;
+				SetBooleanItem(measureID, kLength, item = kLength);
+				SetBooleanItem(measureID, kX, item = kX);
+				SetBooleanItem(measureID, kY, item = kY);
+				CASE item OF
+					kLength: selectedValue := lengthValue;
+					kX: selectedValue := xValue;
+					kY: selectedValue := yValue;
+				END;
+				{ Restart the one-second interval when the selection changes. }
+				IF timerRunning THEN DeregisterDialogFromTimerEvents(measureID);
+				RegisterDialogForTimerEvents(measureID, 1000);
+				timerRunning := TRUE;
+			END;
+			DialogTimerEventMessageC:
+			BEGIN
+				IF timerRunning & (selectedItem <> 0) THEN BEGIN
+					DeregisterDialogFromTimerEvents(measureID);
+					timerRunning := FALSE;
+					measuredDistance := selectedValue;
+					acquired := TRUE;
+					item := 1;
+				END;
+			END;
+			1: item := 0; { Enter must not accept an unselected value. }
+		END;
+	END;
+
+BEGIN
+	acquired := FALSE;
+	selectedItem := 0;
+	timerRunning := FALSE;
+	Message('距離を計測する始点と終点の2点をクリックしてください。');
+	GetLine(x1, y1, x2, y2);
+	ClrMessage;
+	lengthValue := Distance(x1, y1, x2, y2);
+	xValue := Abs(x2 - x1);
+	yValue := Abs(y2 - y1);
+
+	measureID := CreateLayout('距離計測ツール', FALSE, '', '');
+	CreateRadioButton(measureID, kLength, '△Lを取得');
+	CreateRadioButton(measureID, kX, '△Xを取得');
+	CreateRadioButton(measureID, kY, '△Yを取得');
+	CreateStaticText(measureID, kLengthValue, Num2StrF(lengthValue), kValueWidth);
+	CreateStaticText(measureID, kXValue, Num2StrF(xValue), kValueWidth);
+	CreateStaticText(measureID, kYValue, Num2StrF(yValue), kValueWidth);
+	SetFirstLayoutItem(measureID, kLength);
+	SetBelowItem(measureID, kLength, kX, 0, kRowGap);
+	SetBelowItem(measureID, kX, kY, 0, kRowGap);
+	SetRightItem(measureID, kLength, kLengthValue, 1, 0);
+	SetRightItem(measureID, kX, kXValue, 1, 0);
+	SetRightItem(measureID, kY, kYValue, 1, 0);
+	IF VerifyLayout(measureID) THEN BEGIN
+		measureResult := RunLayoutDialog(measureID, MeasureHandler);
+		IF timerRunning THEN DeregisterDialogFromTimerEvents(measureID);
+	END;
+END;
