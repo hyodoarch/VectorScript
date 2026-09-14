@@ -10,7 +10,7 @@
 - [ライセンスの適用範囲](LICENSE)
 - [配布内容と検証記録](VALIDATION.md)
 
-Windows 64bit / Vectorworks 2026向けのプレビュー版です。配布形式での実機確認はまだ完了していません。
+Windows 64bit / Vectorworks 2026向けの正式公開版です。作者による配布版のインストール・動作確認済みです。
 通常の導入にはReleasesの配布ZIPを使用してください。GitHubの「Source code (zip)」はリポジトリ全体で、配置構造が異なります。
 
 ## フォルダー構成

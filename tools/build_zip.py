@@ -6,7 +6,7 @@ root = Path(__file__).resolve().parents[1]
 package = root / 'plugins/ha_ij_direction'
 dist = root / 'dist'
 dist.mkdir(exist_ok=True)
-archive = dist / 'ha_ij_direction-v0.1.0-rc.1-vw2026-windows-x64.zip'
+archive = dist / 'ha_ij_direction-v0.1.0-vw2026-windows-x64.zip'
 with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as output:
     for path in sorted(package.rglob('*')):
         if path.is_file():

@@ -428,7 +428,7 @@ VAR
 	VAR
 		sizeSet : BOOLEAN;
 	BEGIN
-		dialogID := CreateLayout('「斜め作図支援 PRO」  ｉｊ方向移動・複製',
+		dialogID := CreateLayout('ha_ｉｊ方向移動・複製',
 								 TRUE, '', '');
 
 		staticTextStr1 := '移動・複製距離：';

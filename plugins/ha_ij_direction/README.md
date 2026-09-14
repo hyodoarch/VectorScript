@@ -5,11 +5,11 @@
 - Windows 64bit上のVectorworks 2026用。SDK追加関数は2026 SDKのRelease/x64ビルドです。
 - 開発時の確認環境はVectorworks Architect 2026です。
 - macOS、Windows ARMネイティブ、他のVectorworks年度・製品構成では動作未確認です。
-- 配布フォルダー配置での実機確認前のプレビュー版です。開発環境での機能確認と区別しています。
+- 作者による配布版のインストール・動作確認済みです。他のPC環境での動作は未確認です。
 
 ## インストール
 
-1. Releasesから `ha_ij_direction-v0.1.0-rc.1-vw2026-windows-x64.zip` をダウンロードして解凍します。
+1. Releasesから `ha_ij_direction-v0.1.0-vw2026-windows-x64.zip` をダウンロードして解凍します。
 2. Vectorworksを終了します。
 3. 解凍した `ha_ij_direction` フォルダーを、そのままユーザーのPlug-insフォルダーへコピーします。
 
