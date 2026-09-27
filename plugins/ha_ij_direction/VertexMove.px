@@ -1,0 +1,315 @@
+{ Existing vertex geometry from ijVertexMoveDialog (Copyright 2011 兵藤善紀建築設計事務所).
+  Requires SelPolyArea, xMoveDist and yMoveDist in the enclosing scope. }
+FUNCTION VertexMove(hh :Handle) :Boolean;
+CONST
+	NumOfVertex					= 4;		{元四角形ということがわかっている}
+	RAccuracy					= 1E-006;	{四角形変換の際の許容精度}
+
+Var
+	LP1,LP2,PolyP,						{直線の両端座標。多角形、曲線の頂点座標（円弧も）。}
+	ArcBoxP1,ArcBoxP2		:Vector;	{円弧が納まる四角形の座標}
+	hhPoly2Poly,hhPolyHole	:Handle;	{曲線をコピーしてUndoに対応させる為に使うハンドル。曲線の穴のハンドル}
+	PolyVertexType			:Integer;	{頂点の種類 Get(Set)PolylineVertex で使用}
+	PolyArcRadius,						{円弧の半径 Get(Set)PolylineVertex で使用}
+	textAngle				:Real;		{テキストの角度 Get(Set)TextOrientation で使用}
+	textIsMirrored,						{テキストの反転の判定 Get(Set)TextOrientation で使用。}
+	isHole					:Boolean;	{曲線に穴があるか？}
+	ii,kk,nn				:Integer;	{カウンタ、曲線の穴の数}
+
+{以下、四角形変換用の変数}
+	hhRect2Poly,						{頂点座標取得のために四角形を多角形に変換したときの多角形のハンドル}
+	hhRect					:Handle;	{hhRect2Polyを元に描画した四角形のハンドル}
+	RectW,RectH,RectA,					{四角形の幅と高さ、角度}
+	RRectW,RRectH,RRectA,				{隅丸四角形の幅と高さ、角度}
+	xRRect,yRRect			:Real;		{隅丸四角形の直径}
+	PolyPt:ARRAY[1..4] OF Vector;		{頂点座標用配列}
+	RDP:ARRAY[1..4] OF REAL;			{内積格納用配列}
+	RectC,RectC2,						{頂点移動後の多角形と変更後の四角形の中心座標}
+	RRectPt1,RRectPt2		:Vector;	{変形前の隅丸四角形の左上座標と右下座標}
+
+	ObjTypeMess				:String;	{ダイアログ用メッセージ}
+
+BEGIN
+	VertexMove := FALSE;
+	ResetObject(hh);	{この関数の働き不明}
+
+{********* 2D基準点 *********}
+	IF GetTypeN(hh)=17 THEN Begin
+		GetLocPt(hh,LP1.x,LP1.y);
+		If PtInPoly(LP1.x,LP1.y,SelPolyArea) Then HMove(hh,xMoveDist,yMoveDist);
+	End;
+
+{********* 拘束点（検討中） *********
+	IF GetTypeN(hh)=17 THEN 
+	Begin
+		GetLocPt(hh,LP1.x,LP1.y);
+		If PtInPoly(LP1.x,LP1.y,SelPolyArea) Then HMove(hh,xMoveDist,yMoveDist);
+	End;}
+
+{********* シンボル、プラグインオブジェクト *********}
+	IF (GetTypeN(hh)=15) | (GetTypeN(hh)=86) THEN Begin
+		GetSymLoc(hh,LP1.x,LP1.y);
+		If PtInPoly(LP1.x,LP1.y,SelPolyArea) Then HMove(hh,xMoveDist,yMoveDist);
+	End;
+
+{********* 直線、壁 *********}
+	IF (GetTypeN(hh)=2) OR (GetTypeN(hh)=68) THEN Begin
+		GetSegPt1(hh,LP1.x,LP1.y);
+		GetSegPt2(hh,LP2.x,LP2.y);
+		If PtInPoly(LP1.x,LP1.y,SelPolyArea) Then
+			SetSegPt1(
+					hh,
+					LP1.x+xMoveDist,
+					LP1.y+yMoveDist
+					);
+		If PtInPoly(LP2.x,LP2.y,SelPolyArea) Then
+			SetSegPt2(
+					hh,
+					LP2.x+xMoveDist,
+					LP2.y+yMoveDist
+					);
+	End;{********* 直線、壁終わり *********}
+
+{********* 多角形 *********}
+	IF GetTypeN(hh)=5 THEN Begin
+		For ii:=1 To GetVertNum(hh) Do begin
+			GetPolyPt(
+			hh,ii,
+			PolyP.x,
+			PolyP.y
+			);
+			If PtInPoly(PolyP.x,PolyP.y,SelPolyArea) Then
+				SetPolyPt(
+				hh,ii,
+				PolyP.x+xMoveDist,
+				PolyP.y+yMoveDist
+				);
+		end;
+	End;{********* 多角形終わり *********}
+
+{********* 四角形 *********}
+	IF GetTypeN(hh)=3 THEN Begin
+		For ii:=1 To NumOfVertex Do PolyPt[ii].z:=0;
+	nn:=0;			{SelPolyArea内の頂点の数の初期化}
+		hhRect2Poly:=MakePolygon(hh);
+
+		For ii:=1 To NumOfVertex Do begin	{多角形の頂点移動と同じルーチン}
+			GetPolyPt(
+			hhRect2Poly,ii,
+			PolyP.x,
+			PolyP.y
+			);
+			If PtInPoly(PolyP.x,PolyP.y,SelPolyArea) Then Begin
+				SetPolyPt(
+				hhRect2Poly,ii,
+				PolyP.x+xMoveDist,
+				PolyP.y+yMoveDist
+				);
+				nn:=nn+1;
+			End;
+		end;
+
+		For ii:=1 To NumOfVertex Do GetPolyPt(hhRect2Poly,ii,PolyPt[ii].x,PolyPt[ii].y);{改めて座標を取得}
+		RDP[1]:=DotProduct(PolyPt[2]-PolyPt[1],PolyPt[4]-PolyPt[1]);	{内積が 0 なら直角。3つの角を調べる}
+		RDP[2]:=DotProduct(PolyPt[3]-PolyPt[2],PolyPt[1]-PolyPt[2]);
+		RDP[3]:=DotProduct(PolyPt[4]-PolyPt[3],PolyPt[2]-PolyPt[3]);
+
+		If	(
+			(	Abs(RDP[1])<RAccuracy	)	{内積が 0 に近ければ四角形とする。精度±RAccuracy}
+		&	(	Abs(RDP[2])<RAccuracy	)
+		&	(	Abs(RDP[3])<RAccuracy	)
+			)
+		Then Begin
+			if nn=4	then begin
+				DelObject(hhRect2Poly);			{多角形を消去}
+				HMove(hh,xMoveDist,yMoveDist);
+				if (GetTypeN(hh)=13) then SetRRDiam(hh,xRRect,yRRect);
+			end;
+			if nn=2 then begin
+				HCenter(hhRect2Poly,RectC.x,RectC.y);
+				DelObject(hhRect2Poly);	{多角形を消去}
+				{Locus(RectC.x,RectC.y);}
+				RectW:=Distance(PolyPt[2].x,PolyPt[2].y,PolyPt[1].x,PolyPt[1].y);
+				RectH:=Distance(PolyPt[4].x,PolyPt[4].y,PolyPt[1].x,PolyPt[1].y);
+				SetWidth (hh,RectW);
+				SetHeight(hh,RectH);
+				HMove(hh,10,10);	{拘束点のズレを解消するために一度移動し、戻すハック。}
+				HMove(hh,-10,-10);	{このハックは曲線には無効だった。四角形の幅と高さを変更したあとに中心座標を取得するのに有効}
+				HCenter(hh,RectC2.x,RectC2.y);
+				{Locus(RectC2.x,RectC2.y);}
+				HMove(hh,-(RectC2.x-RectC.x),-(RectC2.y-RectC.y));
+			end;
+			if nn=0 then begin
+				DelObject(hhRect2Poly);	{多角形を消去}
+			end;
+		End
+		Else Begin
+			DelObject(hh);		{四角形を消去}
+			hh:=hhRect2Poly;	{ハンドルを変換した多角形に渡す}
+		End;
+	End;{********* 四角形終わり *********}
+
+{********* 角の丸い四角形 *********}
+	IF GetTypeN(hh)=13 THEN Begin
+		For ii:=1 To NumOfVertex Do PolyPt[ii].z:=0;
+	nn:=0;			{SelPolyArea内の頂点の数の初期化}
+		GetRRDiam(hh,xRRect,yRRect);
+		RRectA:=	HAngle(hh);
+{ObjTypeMess:=Concat('RRectA = ',RRectA);
+AlrtDialog(ObjTypeMess);}
+		SetRRDiam(hh,0,0);
+		hhRect2Poly:=MakePolygon(hh);
+
+		For ii:=1 To NumOfVertex Do begin	{多角形の頂点移動と同じルーチン}
+			GetPolyPt(
+			hhRect2Poly,ii,
+			PolyP.x,
+			PolyP.y
+			);
+			If PtInPoly(PolyP.x,PolyP.y,SelPolyArea) Then Begin
+				SetPolyPt(
+				hhRect2Poly,ii,
+				PolyP.x+xMoveDist,
+				PolyP.y+yMoveDist
+				);
+				nn:=nn+1;
+			End;
+		end;
+
+		For ii:=1 To NumOfVertex Do GetPolyPt(hhRect2Poly,ii,PolyPt[ii].x,PolyPt[ii].y);{改めて座標を取得}
+		RDP[1]:=DotProduct(PolyPt[2]-PolyPt[1],PolyPt[4]-PolyPt[1]);	{内積が 0 なら直角。3つの角を調べる}
+		RDP[2]:=DotProduct(PolyPt[3]-PolyPt[2],PolyPt[1]-PolyPt[2]);
+		RDP[3]:=DotProduct(PolyPt[4]-PolyPt[3],PolyPt[2]-PolyPt[3]);
+
+		If	(
+			(	Abs(RDP[1])<RAccuracy	)	{内積が 0 に近ければ四角形とする。精度±RAccuracy}
+		&	(	Abs(RDP[2])<RAccuracy	)
+		&	(	Abs(RDP[3])<RAccuracy	)
+			)
+		Then Begin
+			if nn=4	then begin
+				DelObject(hhRect2Poly);			{多角形を消去}
+				HMove(hh,xMoveDist,yMoveDist);
+				SetRRDiam(hh,xRRect,yRRect);
+			end;
+			if nn=2 then begin
+				HCenter(hhRect2Poly,RectC.x,RectC.y);
+				DelObject(hhRect2Poly);	{多角形を消去}
+				{For ii:=1 To NumOfVertex Do Locus(PolyPt[ii].x,PolyPt[ii].y);	座標確認}
+				RRectW:=Distance(PolyPt[2].x,PolyPt[2].y,PolyPt[1].x,PolyPt[1].y);
+				RRectH:=Distance(PolyPt[4].x,PolyPt[4].y,PolyPt[1].x,PolyPt[1].y);
+				HRotate(hh,0,0,-RRectA);
+				GetBBox(hh,RRectPt1.x,RRectPt1.y,RRectPt2.x,RRectPt2.y);
+				SetBBox(hh,RRectPt1.x,RRectPt1.y,RRectPt1.x+RRectW,RRectPt1.y-RRectH);
+				HRotate(hh,0,0,RRectA);
+				SetRRDiam(hh,xRRect,yRRect);
+				HCenter(hh,RectC2.x,RectC2.y);
+				HMove(hh,-(RectC2.x-RectC.x),-(RectC2.y-RectC.y));
+			end;
+			if nn=0 then begin				{四角形だが、SelPolyArea の範囲外}
+				DelObject(hhRect2Poly);
+				SetRRDiam(hh,xRRect,yRRect);
+			end;
+		End
+		Else Begin
+			DelObject(hhRect2Poly);		{多角形を消去}
+			SetRRDiam(hh,xRRect,yRRect);
+			hhPoly2Poly:=MakePolyline(hh);		{曲線に変換して、曲線ルーチンに渡す}
+			DelObject(hh);
+			hh:=hhPoly2Poly;
+		End;
+	End;{********* 角の丸い四角形終わり *********}
+
+{********* 曲線 *********}
+	IF GetTypeN(hh)=21 THEN Begin
+	{Undoに対応。しかし寸法の拘束点が消える}
+		hhPoly2Poly:=MakePolyline(hh);
+		DelObject(hh);
+		hh:=hhPoly2Poly;
+		For ii:=1 To GetVertNum(hh) Do begin
+			GetPolylineVertex(
+			hh,ii,
+			PolyP.x,
+			PolyP.y,
+			PolyVertexType,PolyArcRadius
+			);
+			If PtInPoly(PolyP.x,PolyP.y,SelPolyArea) Then
+				SetPolylineVertex(
+				hh,ii,
+				PolyP.x+xMoveDist,
+				PolyP.y+yMoveDist,
+				PolyVertexType,PolyArcRadius,TRUE
+				);
+		end;
+	{ホロー形状に対応。}
+		If GetNumHoles(hh,nn) Then begin
+			for kk:=1 to nn do begin
+				isHole:=GetHole(hh,kk,hhPolyHole);
+				For ii:=1 To GetVertNum(hhPolyHole) Do begin
+					GetPolylineVertex(
+					hhPolyHole,ii,
+					PolyP.x,
+					PolyP.y,
+					PolyVertexType,PolyArcRadius
+					);
+					If PtInPoly(PolyP.x,PolyP.y,SelPolyArea) Then
+						SetPolylineVertex(
+						hhPolyHole,ii,
+						PolyP.x+xMoveDist,
+						PolyP.y+yMoveDist,
+						PolyVertexType,PolyArcRadius,TRUE
+						);
+				end;
+			end;
+		end;
+	End;{********* 曲線終わり *********}
+
+{********* 円、円弧 *********}
+	IF (GetTypeN(hh)=6) OR (GetTypeN(hh)=4) THEN Begin
+		HCenter(hh,PolyP.x,PolyP.y);
+		GetBBox(hh,ArcBoxP1.x,ArcBoxP1.y,ArcBoxP2.x,ArcBoxP2.y);
+		If PtInPoly(PolyP.x,PolyP.y,SelPolyArea)
+			OR (PtInPoly(ArcBoxP1.x,ArcBoxP1.y,SelPolyArea) & PtInPoly(ArcBoxP2.x,ArcBoxP2.y,SelPolyArea))
+		Then HMove(hh,xMoveDist,yMoveDist);
+	End;{********* 円、円弧終わり *********}
+
+{********* テキスト *********}
+	IF GetTypeN(hh)=10 THEN Begin
+		GetTextOrientation(hh,PolyP.x,PolyP.y,textAngle,textIsMirrored);
+		If PtInPoly(PolyP.x,PolyP.y,SelPolyArea) Then
+		SetTextOrientation(hh,PolyP.x+xMoveDist,PolyP.y+yMoveDist,textAngle,textIsMirrored);
+	End;{********* テキスト終わり *********}
+
+{********* 寸法 (全体が入っているときのみ移動）*********}
+	IF (GetTypeN(hh)=63) THEN Begin
+		GetSegPt1(hh,LP1.x,LP1.y);
+		GetSegPt2(hh,LP2.x,LP2.y);
+		If PtInPoly(LP1.x,LP1.y,SelPolyArea) AND PtInPoly(LP2.x,LP2.y,SelPolyArea) Then
+			HMove(hh,xMoveDist,yMoveDist);
+		{If PtInPoly(LP1.x,LP1.y,SelPolyArea) Then
+			SetSegPt1(
+					hh,
+					LP1.x+xMoveDist,
+					LP1.y+yMoveDist
+					);
+					
+		If PtInPoly(LP2.x,LP2.y,SelPolyArea) Then
+			SetSegPt2(
+					hh,
+					LP2.x+xMoveDist,
+					LP2.y+yMoveDist
+					);}
+	End;
+
+{********* グループ（寸法の拘束点対策）*********}
+	IF (GetTypeN(hh)=11) THEN Begin
+		HMove(hh,10,10);	{拘束点のズレを解消するために一度移動し、戻すハック}
+		HMove(hh,-10,-10);	{このハックは曲線には無効だった}
+	End;{********* グループ終わり *********}
+
+{###### 以降コーディング中 ######}
+
+	SetSelect(hh);
+	ResetObject(hh);{再生成}
+
+END;{****************** VertexMove	頂点移動関数 END******************}

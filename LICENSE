@@ -2,7 +2,7 @@
 
 この配布物には異なる条件のファイルが含まれます。
 
-- .vss、.px、.vsm、ha_ij_direction.vwr、矢印PNG、文書、梱包スクリプト: LICENSE-MIT.txt
+- .vss、.px、.vsm、.vst、ha_ij_direction.vwr、矢印PNG、文書、梱包スクリプト: LICENSE-MIT.txt
 - ha_VSFunctions.vlb、ha_VSFunctions.vwr: LICENSE-SDK-RUNTIME.md
 
 MIT対象部分は著作権表示と許諾文を保持すれば、個人・業務利用、改変、再配布、販売が可能です。

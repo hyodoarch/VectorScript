@@ -1,0 +1,772 @@
+{ ha_ｉｊ方向頂点移動ツール
+  選択図形の頂点を矩形で囲み、左右=i方向、上下=j方向へ移動する。
+  Ctrlの有無にかかわらず頂点移動のみ。複製数欄は削除し、空白行で履歴の位置を保つ。
+  ダイアログは ha_ｉｊ方向移動 と同じ（タイトル変更・複製数行を空白化）。 }
+
+PROCEDURE ha_ijVertexMoveTool;
+
+CONST
+	ObjectsOpt = 2;
+	LayersOpt = 4;
+	kOkButton       = 1;
+	kCancelButton   = 2;
+
+	kRealField1     = 5;
+	kRealField2     = 7;
+	kListBox1       = 9;
+	kRadioButton1   = 10;
+	kRadioButton2   = 11;
+	kListBox2       = 12;
+	kStaticText1    = 13;
+	kStaticText2    = 14;
+	kDistanceSpacer    = 15;
+	kStaticText3    = 16;
+	kStaticText4    = 17;
+
+	kArrowSpacer    = 20;
+	kButtonUp       = 21;
+	kButtonDown     = 22;
+	kButtonLeft     = 23;
+	kButtonRight    = 24;
+	kArrowGroup     = 25;
+	kAcquireAngle   = 26;
+	kMeasureDistance = 27;
+	kTimerEvent     = DialogTimerEventMessageC;
+
+	hisBoxNumRow    = 18;
+	kAngleHistoryRows = 13;
+	kDistSaveMax    = 1000;
+	kDistDisplayMax = 100;
+	kAngleSaveMax   = 100;
+	kHistoryWSName  = 'ha_ij_direction_history';
+	kHistoryVersion = 'ha_ij_history_v2';
+	kOldHistoryVersion = 'ha_ij_history_v1';
+	kHistoryDataRow = 3;
+
+VAR
+	Pt1, Pt2, savedOrigin : VECTOR;
+	SelPolyArea : HANDLE;
+	xMoveDist, yMoveDist : REAL;
+	targetCount, targetIndex : LONGINT;
+	targets : DYNARRAY[] OF HANDLE;
+	collectTargets : BOOLEAN;
+	dialogID, result                  : LONGINT;
+	staticTextStr1, staticTextStr2,
+	staticTextStr3, staticTextStr4                    : STRING;
+	MoveDist, LineAngleTmp            : REAL;
+	LineAngle, LineAngleTan           : REAL;
+	listBoxNo1, listBoxNo2            : INTEGER;
+	listBoxStr1, listBoxStr2          : STRING;
+	RB1OnOff                          : BOOLEAN;
+
+	DegTanSel                         : BOOLEAN;
+
+	ii                                : INTEGER;
+	hisDist                           : DYNARRAY[] OF REAL;
+	hisAngle                          : DYNARRAY[] OF REAL;
+	hisAngleTan                       : DYNARRAY[] OF REAL;
+	hisDistCount, hisAngleCount,
+	hisAngleTanCount                  : INTEGER;
+	historyWS                         : HANDLE;
+	historyReady                      : BOOLEAN;
+	currentScale                      : REAL;
+
+	pressedArrow, pendingArrow        : LONGINT;
+	acquireRequested, restoreInputs, angleAcquired : BOOLEAN;
+	measureRequested, distanceAcquired : BOOLEAN;
+	measuredDistance : REAL;
+	savedDistance, savedAngle : STRING;
+
+{$INCLUDE ha_PickReferenceAngle.px}
+{$INCLUDE ha_MeasureDistance.px}
+
+	{***************************************************************************
+		v2形式の履歴保存用ワークシートを作る。
+	***************************************************************************}
+	PROCEDURE InitializeHistoryWorksheet;
+	BEGIN
+		historyWS := CreateWS(kHistoryWSName, kHistoryDataRow, 7);
+		IF historyWS = NIL THEN BEGIN
+			historyReady := FALSE;
+			AlrtDialog('履歴保存用ワークシートを作成できません。');
+		END
+		ELSE BEGIN
+			SetWSCellFormula(historyWS, 1, 1, 1, 1, kHistoryVersion);
+			SetWSCellFormula(historyWS, 1, 7, 1, 7, '入力方式');
+			SetWSCellFormula(historyWS, 2, 1, 2, 1, '距離用縮尺');
+			SetWSCellFormula(historyWS, 2, 2, 2, 2, '距離履歴');
+			SetWSCellFormula(historyWS, 2, 3, 2, 3, '上ほど新しい');
+			SetWSCellFormula(historyWS, 2, 4, 2, 4, '角度θ履歴');
+			SetWSCellFormula(historyWS, 2, 5, 2, 5, 'tanθ履歴');
+			SetWSCellFormula(historyWS, 2, 7, 2, 7, 'THETA');
+		END;
+	END;
+
+	{***************************************************************************
+		図面内にv2形式のワークシートを用意する。
+		値を保存できていないv1形式だけは自動的に作り直す。
+	***************************************************************************}
+	PROCEDURE EnsureHistoryWorksheet;
+	VAR
+		wsRows, wsColumns : INTEGER;
+		headerStr         : STRING;
+	BEGIN
+		historyReady := TRUE;
+		historyWS := GetObject(kHistoryWSName);
+
+		IF historyWS = NIL THEN
+			InitializeHistoryWorksheet
+		ELSE IF GetTypeN(historyWS) <> 18 THEN BEGIN
+			historyReady := FALSE;
+			AlrtDialog(Concat('「', kHistoryWSName,
+				'」という名前が既に使われているため、履歴を保存できません。'));
+		END
+		ELSE BEGIN
+			GetWSCellString(historyWS, 1, 1, headerStr);
+			IF headerStr = kOldHistoryVersion THEN BEGIN
+				ShowWS(historyWS, FALSE);
+				DelObject(historyWS);
+				historyWS := NIL;
+				InitializeHistoryWorksheet;
+			END
+			ELSE IF headerStr <> kHistoryVersion THEN BEGIN
+				historyReady := FALSE;
+				AlrtDialog(Concat('「', kHistoryWSName,
+					'」はこのプラグインの履歴ワークシートではありません。'));
+			END
+			ELSE BEGIN
+				GetWSRowColumnCount(historyWS, wsRows, wsColumns);
+				IF wsRows < kHistoryDataRow THEN
+					InsertWSRows(historyWS, wsRows + 1,
+								 kHistoryDataRow - wsRows);
+				IF wsColumns < 7 THEN
+					InsertWSColumns(historyWS, wsColumns + 1, 7 - wsColumns);
+			END;
+		END;
+	END;
+
+	{***************************************************************************
+		小数点以下10桁で同じ数値を重複と判定する。
+	***************************************************************************}
+	FUNCTION SameHistoryValue(value1, value2: REAL): BOOLEAN;
+	BEGIN
+		SameHistoryValue := Num2Str(10, value1) = Num2Str(10, value2);
+	END;
+
+	{***************************************************************************
+		v2形式の距離・角度履歴を読み込む。
+	***************************************************************************}
+	PROCEDURE LoadHistoriesV2;
+	VAR
+		wsRows, wsColumns, rowNo : INTEGER;
+		scaleValue, valueValue, angleValue, tanValue : REAL;
+		modeStr : STRING;
+	BEGIN
+		hisDistCount := 0;
+		hisAngleCount := 0;
+		hisAngleTanCount := 0;
+		DegTanSel := TRUE;
+
+		GetWSCellString(historyWS, 2, 7, modeStr);
+		IF modeStr = 'TAN' THEN DegTanSel := FALSE;
+
+		GetWSRowColumnCount(historyWS, wsRows, wsColumns);
+		FOR rowNo := kHistoryDataRow TO wsRows DO BEGIN
+			IF (hisDistCount < kDistDisplayMax)
+			& IsWSCellNumber(historyWS, rowNo, 1)
+			& IsWSCellNumber(historyWS, rowNo, 2) THEN BEGIN
+				GetWSCellValue(historyWS, rowNo, 1, scaleValue);
+				IF Abs(scaleValue - currentScale) < 0.00000001 THEN BEGIN
+					GetWSCellValue(historyWS, rowNo, 2, valueValue);
+					hisDistCount := hisDistCount + 1;
+					hisDist[hisDistCount] := valueValue;
+				END;
+			END;
+
+			IF (hisAngleCount < kAngleSaveMax)
+			& IsWSCellNumber(historyWS, rowNo, 4) THEN BEGIN
+				GetWSCellValue(historyWS, rowNo, 4, angleValue);
+				hisAngleCount := hisAngleCount + 1;
+				hisAngle[hisAngleCount] := angleValue;
+				IF ha_AngleHasTan(angleValue) THEN BEGIN
+					hisAngleTanCount := hisAngleTanCount + 1;
+					IF IsWSCellNumber(historyWS, rowNo, 5) THEN
+						GetWSCellValue(historyWS, rowNo, 5, tanValue)
+					ELSE
+						tanValue := Tan(Deg2Rad(angleValue));
+					hisAngleTan[hisAngleTanCount] := tanValue;
+				END;
+			END;
+		END;
+	END;
+
+	{***************************************************************************
+		v2形式の距離履歴を縮尺ごとにMRU更新する。
+	***************************************************************************}
+	PROCEDURE UpdateDistanceHistory(value: REAL);
+	VAR
+		wsRows, wsColumns, rowNo, dataCapacity : INTEGER;
+		oldCount, newCount, scaleCount, index : INTEGER;
+		neededRows : INTEGER;
+		oldScales, oldValues : DYNARRAY[] OF REAL;
+		newScales, newValues : DYNARRAY[] OF REAL;
+		scaleValue, distValue : REAL;
+		keepValue : BOOLEAN;
+	BEGIN
+		GetWSRowColumnCount(historyWS, wsRows, wsColumns);
+		dataCapacity := wsRows - kHistoryDataRow + 1;
+		IF dataCapacity < 1 THEN dataCapacity := 1;
+		Allocate oldScales[1..dataCapacity];
+		Allocate oldValues[1..dataCapacity];
+		Allocate newScales[1..dataCapacity + 1];
+		Allocate newValues[1..dataCapacity + 1];
+
+		oldCount := 0;
+		FOR rowNo := kHistoryDataRow TO wsRows DO
+			IF IsWSCellNumber(historyWS, rowNo, 1)
+			& IsWSCellNumber(historyWS, rowNo, 2) THEN BEGIN
+				GetWSCellValue(historyWS, rowNo, 1, scaleValue);
+				GetWSCellValue(historyWS, rowNo, 2, distValue);
+				oldCount := oldCount + 1;
+				oldScales[oldCount] := scaleValue;
+				oldValues[oldCount] := distValue;
+			END;
+
+		newCount := 1;
+		scaleCount := 1;
+		newScales[1] := currentScale;
+		newValues[1] := value;
+
+		FOR index := 1 TO oldCount DO BEGIN
+			keepValue := TRUE;
+			IF Abs(oldScales[index] - currentScale) < 0.00000001 THEN BEGIN
+				IF SameHistoryValue(oldValues[index], value) THEN
+					keepValue := FALSE
+				ELSE IF scaleCount >= kDistSaveMax THEN
+					keepValue := FALSE
+				ELSE
+					scaleCount := scaleCount + 1;
+			END;
+
+			IF keepValue THEN BEGIN
+				newCount := newCount + 1;
+				newScales[newCount] := oldScales[index];
+				newValues[newCount] := oldValues[index];
+			END;
+		END;
+
+		IF wsRows >= kHistoryDataRow THEN
+			SetWSCellFormula(historyWS, kHistoryDataRow, 1, wsRows, 2, '');
+		neededRows := newCount + kHistoryDataRow - 1;
+		IF neededRows > wsRows THEN
+			InsertWSRows(historyWS, wsRows + 1, neededRows - wsRows);
+
+		FOR index := 1 TO newCount DO BEGIN
+			rowNo := index + kHistoryDataRow - 1;
+			SetWSCellFormula(historyWS, rowNo, 1, rowNo, 1,
+							 Num2Str(10, newScales[index]));
+			SetWSCellFormula(historyWS, rowNo, 2, rowNo, 2,
+							 Num2Str(10, newValues[index]));
+		END;
+	END;
+
+	{***************************************************************************
+		v2形式の角度θとtanθを対応する同じ行でMRU更新する。
+	***************************************************************************}
+	PROCEDURE UpdateAngleHistory(angleValue, tanValue: REAL);
+	VAR
+		wsRows, wsColumns, rowNo, dataCapacity : INTEGER;
+		oldCount, newCount, index, neededRows : INTEGER;
+		oldAngles, oldTans : DYNARRAY[] OF REAL;
+		newAngles, newTans : DYNARRAY[] OF REAL;
+	BEGIN
+		GetWSRowColumnCount(historyWS, wsRows, wsColumns);
+		dataCapacity := wsRows - kHistoryDataRow + 1;
+		IF dataCapacity < 1 THEN dataCapacity := 1;
+		Allocate oldAngles[1..dataCapacity];
+		Allocate oldTans[1..dataCapacity];
+		Allocate newAngles[1..kAngleSaveMax];
+		Allocate newTans[1..kAngleSaveMax];
+
+		oldCount := 0;
+		FOR rowNo := kHistoryDataRow TO wsRows DO
+			IF IsWSCellNumber(historyWS, rowNo, 4) THEN BEGIN
+				oldCount := oldCount + 1;
+				GetWSCellValue(historyWS, rowNo, 4, oldAngles[oldCount]);
+				oldTans[oldCount] := 0;
+				IF ha_AngleHasTan(oldAngles[oldCount]) THEN BEGIN
+					IF IsWSCellNumber(historyWS, rowNo, 5) THEN
+						GetWSCellValue(historyWS, rowNo, 5, oldTans[oldCount])
+					ELSE
+						oldTans[oldCount] := Tan(Deg2Rad(oldAngles[oldCount]));
+				END;
+			END;
+
+		newCount := 1;
+		newAngles[1] := angleValue;
+		newTans[1] := tanValue;
+		FOR index := 1 TO oldCount DO
+			IF (newCount < kAngleSaveMax)
+			& (NOT SameHistoryValue(oldAngles[index], angleValue)) THEN BEGIN
+				newCount := newCount + 1;
+				newAngles[newCount] := oldAngles[index];
+				newTans[newCount] := oldTans[index];
+			END;
+
+		IF wsRows >= kHistoryDataRow THEN
+			SetWSCellFormula(historyWS, kHistoryDataRow, 4, wsRows, 5, '');
+		neededRows := newCount + kHistoryDataRow - 1;
+		IF neededRows > wsRows THEN
+			InsertWSRows(historyWS, wsRows + 1, neededRows - wsRows);
+
+		FOR index := 1 TO newCount DO BEGIN
+			rowNo := index + kHistoryDataRow - 1;
+			SetWSCellFormula(historyWS, rowNo, 4, rowNo, 4,
+							 Num2Str(10, newAngles[index]));
+			{ 垂直線は角度だけ保存し、tan列は空欄にする。 }
+			IF ha_AngleHasTan(newAngles[index]) THEN
+				SetWSCellFormula(historyWS, rowNo, 5, rowNo, 5,
+								 Num2Str(10, newTans[index]));
+		END;
+	END;
+
+	{***************************************************************************
+		選択対象を記録し、指定した i／j 方向へ頂点を移動する。
+	***************************************************************************}
+	FUNCTION CollectTarget(h: HANDLE): BOOLEAN;
+	BEGIN
+		CollectTarget := FALSE;
+		targetCount := targetCount + 1;
+		IF collectTargets THEN targets[targetCount] := h;
+	END;
+
+{$INCLUDE VertexMove.px}
+
+	PROCEDURE MoveVertexTree(h: HANDLE);
+	VAR
+		child, nextChild : HANDLE;
+		ignored : BOOLEAN;
+	BEGIN
+		IF GetTypeN(h) = 11 THEN BEGIN
+			child := FInGroup(h);
+			WHILE child <> NIL DO BEGIN
+				{ Geometry conversion can delete the current object. }
+				nextChild := NextObj(child);
+				MoveVertexTree(child);
+				child := nextChild;
+			END;
+		END;
+		ignored := VertexMove(h);
+	END;
+
+	PROCEDURE ijMoveDist(ij: BOOLEAN; ll: REAL; rad: REAL);
+	VAR
+		baseX, baseY : REAL;
+	BEGIN
+		IF ij THEN BEGIN
+			baseX := ll * Cos(rad);
+			baseY := ll * Sin(rad);
+		END
+		ELSE BEGIN
+			baseX := -ll * Sin(rad);
+			baseY :=  ll * Cos(rad);
+		END;
+
+		{ Create the region only during execution: Esc in a picker leaves no object. }
+		Poly(Pt1.x, Pt1.y, Pt1.x, Pt2.y, Pt2.x, Pt2.y,
+			 Pt2.x, Pt1.y, Pt1.x, Pt1.y);
+		SelPolyArea := LNewObj;
+		SetDSelect(SelPolyArea);
+		{ The legacy geometry uses the internal origin. Restore before returning. }
+		GetOrigin(savedOrigin.x, savedOrigin.y);
+		SetOriginAbsolute(0, 0);
+		xMoveDist := baseX;
+		yMoveDist := baseY;
+		FOR targetIndex := 1 TO targetCount DO
+			MoveVertexTree(targets[targetIndex]);
+		SetOriginAbsolute(savedOrigin.x, savedOrigin.y);
+		DelObject(SelPolyArea);
+		SelPolyArea := NIL;
+	END;
+
+	{***************************************************************************
+		入力値を確認し、矢印に対応する処理と履歴更新を行う。
+	***************************************************************************}
+	PROCEDURE ExecuteArrow(direction: LONGINT;
+						 VAR itemHit: LONGINT);
+	VAR
+		moveInIDirection : BOOLEAN;
+		signedMoveDist   : REAL;
+	BEGIN
+		IF GetEditReal(dialogID, kRealField1, 1, MoveDist)
+		& GetEditReal(dialogID, kRealField2, 1, LineAngleTmp) THEN BEGIN
+
+
+			moveInIDirection := (direction = kButtonLeft)
+							 OR (direction = kButtonRight);
+			signedMoveDist := MoveDist;
+			IF (direction = kButtonDown) OR (direction = kButtonLeft) THEN
+				signedMoveDist := -signedMoveDist;
+
+			GetBooleanItem(dialogID, kRadioButton1, RB1OnOff);
+			IF RB1OnOff THEN BEGIN
+				LineAngle := LineAngleTmp;
+				WHILE LineAngle > 90 DO LineAngle := LineAngle - 180;
+				WHILE LineAngle <= -90 DO LineAngle := LineAngle + 180;
+				LineAngleTan := 0;
+				IF ha_AngleHasTan(LineAngle) THEN
+					LineAngleTan := Tan(Deg2Rad(LineAngle));
+				ijMoveDist(moveInIDirection, signedMoveDist,
+						   Deg2Rad(LineAngle));
+			END
+			ELSE BEGIN
+				LineAngle := Rad2Deg(ArcTan(LineAngleTmp));
+				LineAngleTan := LineAngleTmp;
+				ijMoveDist(moveInIDirection, signedMoveDist,
+						   ArcTan(LineAngleTmp));
+			END;
+
+			{ 図面内ワークシートのv2履歴を更新する。 }
+			UpdateDistanceHistory(MoveDist);
+			UpdateAngleHistory(LineAngle, LineAngleTan);
+			IF DegTanSel THEN
+				SetWSCellFormula(historyWS, 2, 7, 2, 7, 'THETA')
+			ELSE
+				SetWSCellFormula(historyWS, 2, 7, 2, 7, 'TAN');
+			RecalculateWS(historyWS);
+			ReDrawAll;
+
+			{ デフォルトボタンIDを返してダイアログを閉じる。 }
+			itemHit := kOkButton;
+		END
+		ELSE BEGIN
+			AlrtDialog('移動距離、基準線傾きを正しく入力してください。');
+			SelectEditText(dialogID, kRealField1);
+			itemHit := 0;
+		END;
+	END;
+
+	{***************************************************************************
+		ダイアログを作成する。
+	***************************************************************************}
+	PROCEDURE CreateIJDialog;
+	VAR
+		sizeSet : BOOLEAN;
+	BEGIN
+		dialogID := CreateLayout('ha_ｉｊ方向頂点移動ツール',
+								 TRUE, '', '');
+
+		staticTextStr1 := '移動・複製距離：';
+		CreateStaticText(dialogID, kStaticText1, staticTextStr1, 16);
+		SetFirstLayoutItem(dialogID, kStaticText1);
+
+		CreateEditReal(dialogID, kRealField1, 1, 0, 16);
+		SetBelowItem(dialogID, kStaticText1, kRealField1, 0, 0);
+
+		{ 複製数の行を空白に置き換え、距離ヒストリーの位置を保つ。 }
+		CreateStaticText(dialogID, kDistanceSpacer, ' ', 16);
+		sizeSet := SetComponentSize(dialogID, kDistanceSpacer, 1, 23);
+		SetBelowItem(dialogID, kRealField1, kDistanceSpacer, 0, 0);
+
+		staticTextStr2 := '距離ヒストリー：';
+		CreateStaticText(dialogID, kStaticText2, staticTextStr2, 16);
+		SetBelowItem(dialogID, kDistanceSpacer, kStaticText2, 0, 1);
+
+		CreateListBox(dialogID, kListBox1, 16, hisBoxNumRow);
+		SetBelowItem(dialogID, kStaticText2, kListBox1, 0, 0);
+		CreatePushButton(dialogID, kMeasureDistance, '距離計測ツール');
+		SetBelowItem(dialogID, kListBox1, kMeasureDistance, 0, 0);
+
+		staticTextStr3 := '基準線傾き：';
+		CreateStaticText(dialogID, kStaticText3, staticTextStr3, 16);
+		SetRightItem(dialogID, kStaticText1, kStaticText3, 4, 0);
+
+		IF (hisAngleCount > 0) & (hisAngle[1] <> 0) THEN
+			SetStaticTextColor(dialogID, kStaticText3, 255, 0, 0);
+
+		CreateEditReal(dialogID, kRealField2, 1, 0, 16);
+		SetBelowItem(dialogID, kStaticText3, kRealField2, 0, 0);
+
+		CreateRadioButton(dialogID, kRadioButton1, 'θ');
+		SetBelowItem(dialogID, kRealField2, kRadioButton1, 0, 0);
+
+		CreateRadioButton(dialogID, kRadioButton2, 'tanθ');
+		SetRightItem(dialogID, kRadioButton1, kRadioButton2, 0, 0);
+
+		staticTextStr4 := '傾きヒストリー：';
+		CreateStaticText(dialogID, kStaticText4, staticTextStr4, 16);
+		SetRightItem(dialogID, kStaticText2, kStaticText4, 4, 0);
+
+		CreateListBox(dialogID, kListBox2, 16, kAngleHistoryRows);
+		SetBelowItem(dialogID, kStaticText4, kListBox2, 0, 0);
+		CreatePushButton(dialogID, kAcquireAngle, '線の傾きの取得');
+		SetBelowItem(dialogID, kListBox2, kAcquireAngle, 0, 0);
+		SetHelpText(dialogID, kAcquireAngle, '図面上の直線をクリックして角度を取得します');
+
+		{ 矢印ボタンを枠なしグループにまとめる。 }
+		CreateGroupBox(dialogID, kArrowGroup, '', FALSE);
+		CreateStaticText(dialogID, kArrowSpacer, ' ', 1);
+		CreateBorderlessBtn(dialogID, kButtonUp, '',
+							'ha_ij_direction/Images/ha_UpArrow.png', FALSE);
+		CreateBorderlessBtn(dialogID, kButtonDown, '',
+							'ha_ij_direction/Images/ha_DownArrow.png', FALSE);
+		CreateBorderlessBtn(dialogID, kButtonLeft, '',
+							'ha_ij_direction/Images/ha_LeftArrow.png', FALSE);
+		CreateBorderlessBtn(dialogID, kButtonRight, '',
+							'ha_ij_direction/Images/ha_RightArrow.png', FALSE);
+
+		{ 26×23画像を表示する。コントロール高27は手作業の設定を維持する。 }
+		sizeSet := SetComponentSize(dialogID, kArrowSpacer, 8, 27);
+		sizeSet := SetComponentSize(dialogID, kButtonUp, 26, 27);
+		sizeSet := SetComponentSize(dialogID, kButtonDown, 26, 27);
+		sizeSet := SetComponentSize(dialogID, kButtonLeft, 26, 27);
+		sizeSet := SetComponentSize(dialogID, kButtonRight, 26, 27);
+
+		SetBelowItem(dialogID, kAcquireAngle, kArrowGroup, 0, 0);
+		SetFirstGroupItem(dialogID, kArrowGroup, kArrowSpacer);
+		{ 横オフセットを1文字分減らし、上ボタンを約6px左へ寄せる。 }
+		SetRightItem(dialogID, kArrowSpacer, kButtonUp, 4, 0);
+		SetBelowItem(dialogID, kArrowSpacer, kButtonLeft, 0, 0);
+		SetRightItem(dialogID, kButtonLeft, kButtonDown, -2, 0);
+		SetRightItem(dialogID, kButtonDown, kButtonRight, -2, 0);
+
+		SetHelpText(dialogID, kRealField1,
+					'頂点を移動する距離を入力してください');
+		SetHelpText(dialogID, kListBox1,
+					'最近入力された距離のヒストリーです');
+		SetHelpText(dialogID, kMeasureDistance,
+					'図面上の2点を指定し、計測した距離を移動・複製距離に入力します。');
+		SetHelpText(dialogID, kRealField2,
+					'基準線の傾きを入力してください');
+		SetHelpText(dialogID, kListBox2,
+					'最近入力記録された基準線の傾きのヒストリーです');
+		SetHelpText(dialogID, kStaticText3, '右上り(＋) 左上り(－)です');
+		SetHelpText(dialogID, kRadioButton1, 'θ[degree]で計算します');
+		SetHelpText(dialogID, kRadioButton2, 'tanθで計算します');
+		SetHelpText(dialogID, kButtonUp, 'j方向の正方向へ移動します');
+		SetHelpText(dialogID, kButtonDown, 'j方向の負方向へ移動します');
+		SetHelpText(dialogID, kButtonLeft, 'i方向の負方向へ移動します');
+		SetHelpText(dialogID, kButtonRight, 'i方向の正方向へ移動します');
+	END;
+
+	{***************************************************************************
+		ダイアログイベント。
+	***************************************************************************}
+	PROCEDURE IJDialogHandler(VAR key: LONGINT; value: LONGINT);
+	BEGIN
+		CASE key OF
+			SetupDialogC:
+			BEGIN
+				FOR ii := 1 TO hisDistCount DO BEGIN
+					AddChoice(dialogID, kListBox1,
+							  Num2StrF(hisDist[ii]), ii - 1);
+				END;
+				IF hisDistCount > 0 THEN
+					SetEditReal(dialogID, kRealField1, 1, hisDist[1])
+				ELSE
+					SetEditReal(dialogID, kRealField1, 1, 0);
+
+				IF DegTanSel THEN BEGIN
+					SetBooleanItem(dialogID, kRadioButton1, TRUE);
+					FOR ii := 1 TO hisAngleCount DO
+						AddChoice(dialogID, kListBox2,
+								  Num2StrF(hisAngle[ii]), ii - 1);
+					IF hisAngleCount > 0 THEN
+						SetEditReal(dialogID, kRealField2, 1, hisAngle[1])
+					ELSE
+						SetEditReal(dialogID, kRealField2, 1, 0);
+				END
+				ELSE BEGIN
+					SetBooleanItem(dialogID, kRadioButton2, TRUE);
+					FOR ii := 1 TO hisAngleTanCount DO
+						AddChoice(dialogID, kListBox2,
+								  Num2StrF(hisAngleTan[ii]), ii - 1);
+					IF hisAngleTanCount > 0 THEN
+						SetEditReal(dialogID, kRealField2, 1, hisAngleTan[1])
+					ELSE
+						SetEditReal(dialogID, kRealField2, 1, 0);
+				END;
+
+				IF restoreInputs THEN BEGIN
+					SetItemText(dialogID, kRealField1, savedDistance);
+					SetItemText(dialogID, kRealField2, savedAngle);
+					IF distanceAcquired THEN
+						SetEditReal(dialogID, kRealField1, 1, measuredDistance);
+					IF angleAcquired THEN BEGIN
+						IF DegTanSel THEN
+							SetEditReal(dialogID, kRealField2, 1, LineAngle)
+						ELSE
+							SetEditReal(dialogID, kRealField2, 1, LineAngleTan);
+					END;
+				END;
+				pendingArrow := 0;
+				RegisterDialogForTimerEvents(dialogID, 20);
+				SelectEditText(dialogID, kRealField1);
+			END;
+
+			kTimerEvent:
+			BEGIN
+				pressedArrow := ha_GetArrowKey;
+
+				{ キーを離した時点で一度だけ実行する。 }
+				IF pendingArrow = 0 THEN BEGIN
+					IF pressedArrow <> 0 THEN BEGIN
+						pendingArrow := pressedArrow;
+					END;
+				END
+				ELSE IF pressedArrow = 0 THEN BEGIN
+					CASE pendingArrow OF
+						1: ExecuteArrow(kButtonUp, key);
+						2: ExecuteArrow(kButtonDown, key);
+						3: ExecuteArrow(kButtonLeft, key);
+						4: ExecuteArrow(kButtonRight, key);
+					END;
+					pendingArrow := 0;
+				END;
+			END;
+
+			kAcquireAngle, kMeasureDistance:
+			BEGIN
+				GetItemText(dialogID, kRealField1, savedDistance);
+				GetItemText(dialogID, kRealField2, savedAngle);
+				GetBooleanItem(dialogID, kRadioButton1, DegTanSel);
+				acquireRequested := key = kAcquireAngle;
+				measureRequested := key = kMeasureDistance;
+				angleAcquired := FALSE;
+				distanceAcquired := FALSE;
+				restoreInputs := TRUE;
+				pendingArrow := 0;
+				key := kOkButton;
+			END;
+
+			kButtonUp, kButtonDown, kButtonLeft, kButtonRight:
+			BEGIN
+				ExecuteArrow(key, key);
+			END;
+
+			kListBox1:
+			BEGIN
+				GetSelectedChoiceInfo(dialogID, kListBox1, 0,
+								  listBoxNo1, listBoxStr1);
+				SetEditReal(dialogID, kRealField1, 1,
+							hisDist[listBoxNo1 + 1]);
+				SetFocusOnItem(dialogID, kRealField1);
+			END;
+
+			kListBox2:
+			BEGIN
+				GetBooleanItem(dialogID, kRadioButton1, RB1OnOff);
+				GetSelectedChoiceInfo(dialogID, kListBox2, 0,
+								  listBoxNo2, listBoxStr2);
+				IF RB1OnOff THEN
+					SetEditReal(dialogID, kRealField2, 1,
+								hisAngle[listBoxNo2 + 1])
+				ELSE
+					SetEditReal(dialogID, kRealField2, 1,
+								hisAngleTan[listBoxNo2 + 1]);
+				SetFocusOnItem(dialogID, kRealField2);
+			END;
+
+			kRadioButton1:
+			BEGIN
+				IF DegTanSel = FALSE THEN BEGIN
+					IF GetEditReal(dialogID, kRealField2, 1, LineAngleTmp) THEN
+						SetEditReal(dialogID, kRealField2, 1,
+									Rad2Deg(ArcTan(LineAngleTmp)));
+					FOR ii := hisAngleTanCount DOWNTO 1 DO
+						RemoveChoice(dialogID, kListBox2, ii - 1);
+					FOR ii := 1 TO hisAngleCount DO
+						AddChoice(dialogID, kListBox2,
+								  Num2StrF(hisAngle[ii]), ii - 1);
+				END;
+				DegTanSel := TRUE;
+			END;
+
+			kRadioButton2:
+			BEGIN
+				IF DegTanSel = TRUE THEN BEGIN
+					IF GetEditReal(dialogID, kRealField2, 1, LineAngleTmp) THEN BEGIN
+						IF ha_AngleHasTan(LineAngleTmp) THEN BEGIN
+							SetEditReal(dialogID, kRealField2, 1, Tan(Deg2Rad(LineAngleTmp)));
+							FOR ii := hisAngleCount DOWNTO 1 DO
+								RemoveChoice(dialogID, kListBox2, ii - 1);
+							FOR ii := 1 TO hisAngleTanCount DO
+								AddChoice(dialogID, kListBox2, Num2StrF(hisAngleTan[ii]), ii - 1);
+							DegTanSel := FALSE;
+						END
+						ELSE
+							AlrtDialog('90°のtanθは定義できないため、θで入力してください。');
+					END;
+					IF DegTanSel THEN BEGIN
+						SetBooleanItem(dialogID, kRadioButton2, FALSE);
+						SetBooleanItem(dialogID, kRadioButton1, TRUE);
+					END;
+				END;
+			END;
+		END;
+	END;
+
+BEGIN
+	targetCount := 0;
+	collectTargets := FALSE;
+	ForEachObjectInLayer(CollectTarget, ObjectsOpt, 0, LayersOpt);
+	IF targetCount = 0 THEN BEGIN
+		AlrtDialog('頂点を移動する図形を選択してからツールを起動してください。');
+	END
+	ELSE BEGIN
+		Allocate targets[1..targetCount];
+		targetCount := 0;
+		collectTargets := TRUE;
+		ForEachObjectInLayer(CollectTarget, ObjectsOpt, 0, LayersOpt);
+		Message('移動する頂点を囲む範囲の対角2点を指定してください。');
+		GetRect(Pt1.x, Pt1.y, Pt2.x, Pt2.y);
+		ClrMessage;
+		IF (Pt1.x <> Pt2.x) & (Pt1.y <> Pt2.y) THEN BEGIN
+			currentScale := GetLScale(ActLayer);
+
+			Allocate hisDist[1..kDistDisplayMax];
+			Allocate hisAngle[1..kAngleSaveMax];
+			Allocate hisAngleTan[1..kAngleSaveMax];
+
+			EnsureHistoryWorksheet;
+			IF historyReady THEN BEGIN
+				LoadHistoriesV2;
+				restoreInputs := FALSE;
+				angleAcquired := FALSE;
+				distanceAcquired := FALSE;
+				REPEAT
+					acquireRequested := FALSE;
+					measureRequested := FALSE;
+					CreateIJDialog;
+					IF VerifyLayout(dialogID) THEN BEGIN
+						result := RunLayoutDialog(dialogID, IJDialogHandler);
+						DeregisterDialogFromTimerEvents(dialogID);
+					END;
+					IF acquireRequested THEN BEGIN
+						{ GetPtはRunLayoutDialogのコールバック外で実行する。 }
+						ha_PickReferenceAngle(angleAcquired, LineAngle);
+						IF angleAcquired THEN BEGIN
+							LineAngleTan := 0;
+							IF ha_AngleHasTan(LineAngle) THEN
+								LineAngleTan := Tan(Deg2Rad(LineAngle))
+							ELSE
+								DegTanSel := TRUE;
+							UpdateAngleHistory(LineAngle, LineAngleTan);
+							IF DegTanSel THEN
+								SetWSCellFormula(historyWS, 2, 7, 2, 7, 'THETA')
+							ELSE
+								SetWSCellFormula(historyWS, 2, 7, 2, 7, 'TAN');
+							RecalculateWS(historyWS);
+							LoadHistoriesV2;
+							ha_ShowReferenceAngle(LineAngle);
+						END;
+					END;
+					IF measureRequested THEN
+						ha_MeasureDistance(distanceAcquired, measuredDistance);
+				UNTIL (NOT acquireRequested) & (NOT measureRequested);
+			END;
+		END;
+	END;
+END;
+
+RUN(ha_ijVertexMoveTool);

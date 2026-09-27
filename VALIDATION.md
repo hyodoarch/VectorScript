@@ -1,3 +1,31 @@
+# 統合配布版の確認記録
+
+対象：v0.2.0 / Windows x64 / Vectorworks 2026
+
+## 今回の変更
+
+移動・複製の既存フォルダーに、頂点移動のVST・VSS・VertexMove.pxを追加。共通PX、SDK、矢印画像は各1組を共有する。VSTは作者がPNGアイコンを取り込んだ版を採用した。
+
+## 動作確認と静的検査
+
+2026-09-27、作者からSDK有効化後の動作成功、およびha_ij_directionへ統合した配置での動作確認完了の報告を受領した。個別14項目の全結果・Vectorworks更新番号・別PCの動作確認結果は受領していない。
+
+公開用のVSM・VST・VSS・PX・VWR・VLB全10ファイルは、作者の統合済みPlug-ins配置とバイト単位で一致することを確認した。確認済み実行コードへの機能変更はない。最終梱包で変更したものはREADMEとLICENSEの文書である。
+
+- 同梱14ファイルの一覧とSHA-256をpackage-sha256.jsonに記録。
+- 両ラッパーのINCLUDE、全VSS/PXの参照先、絶対パスとDEBUG指令の非混入を検査。
+- VST内の通常・2倍PNGが原本と一致。
+- 矢印VWRの8画像、SDKのAMD64形式とha_GetArrowKeyの存在を検査。
+- ZIPのCRC、ファイル別ハッシュ、ZIP全体のSHA-256を検査。
+- SDK有効化漏れによるha_GetArrowKey未宣言エラーは作者が有効化して解消済み。
+
+ZIP：ha_ij_direction-v0.2.0-vw2026-windows-x64.zip
+SHA-256：d533fe1889f323e76a77702451df3bfd3a6ed2b97010646ee27f770fa8ad05de
+
+## 以前の公開版の記録
+
+以下はv0.1.0の記録を保持したもの。
+
 # 配布版の確認記録
 
 対象: v0.1.0 / Vectorworks 2026 / Windows x64

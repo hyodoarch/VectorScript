@@ -9,6 +9,9 @@ LICENSE text eol=lf
 .gitignore text eol=lf
 .gitattributes text eol=lf
 *.vsm -text
+*.vst -text
 *.vlb -text
 *.vwr -text
 *.png -text
+# Preserve tested package bytes, including original source whitespace.
+plugins/ha_ij_direction/** -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
