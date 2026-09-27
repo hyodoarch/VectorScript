@@ -2,6 +2,8 @@
 
 v0.2.0：2つの機能を `ha_ij_direction` フォルダーに統合しました。
 
+[リリース履歴](CHANGELOG.md)
+
 ## 対応環境
 
 - Windows 64bit上のVectorworks 2026用。SDK追加関数は2026 SDKのRelease/x64ビルドです。
