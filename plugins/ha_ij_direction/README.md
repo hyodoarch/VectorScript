@@ -11,7 +11,7 @@ v0.2.0：2つの機能を `ha_ij_direction` フォルダーに統合しました
 
 ## インストール
 
-1. Releasesから `ha_ij_direction-v0.2.0-vw2026-windows-x64.zip` をダウンロードして解凍します。
+1. [配布ZIP（v0.2.0）](https://github.com/hyodoarch/VectorScript/releases/download/v0.2.0/ha_ij_direction-v0.2.0-vw2026-windows-x64.zip)をダウンロードして解凍します。
 2. Vectorworksを終了します。
 3. 解凍した `ha_ij_direction` フォルダーを、そのままユーザーのPlug-insフォルダーへコピーします。
 
